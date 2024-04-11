@@ -1864,6 +1864,13 @@ public:
             allocate_buckets_from_shift();
             clear_and_fill_buckets_from_values();
         }
+        else {
+            m_values.shrink_to_fit();
+        }
+    }
+
+    void compact() {
+        rehash(0);
     }
 
     void reserve(size_t capa) {
