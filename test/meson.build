@@ -20,6 +20,7 @@ test_sources = [
     'unit/assignment_combinations.cpp',
     'unit/at.cpp',
     'unit/bucket.cpp',
+    'unit/change_key.cpp',
     'unit/contains.cpp',
     'unit/copy_and_assign_maps.cpp',
     'unit/copyassignment.cpp',

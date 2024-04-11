@@ -1622,6 +1622,51 @@ public:
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...).first;
     }
 
+    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    auto change_key(iterator it, Key const& new_key) -> std::pair<iterator, bool>
+    {
+        auto const value_idx_to_change = static_cast<value_idx_type>(it - cbegin());
+        
+        auto new_hash = mixed_hash(new_key);
+        auto new_bucket_idx = bucket_idx_from_hash( new_hash );
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash( new_hash );
+
+        while (true) {
+            auto* bucket = &at(m_buckets, new_bucket_idx);
+            if (dist_and_fingerprint == bucket->m_dist_and_fingerprint) {
+                if (m_equal(new_key, get_key(m_values[bucket->m_value_idx]))) {
+                    return {begin() + static_cast<difference_type>(bucket->m_value_idx), false};
+                }
+            } else if (dist_and_fingerprint > bucket->m_dist_and_fingerprint) {
+                // remove old key from buckets
+                auto old_hash = mixed_hash(get_key(*it));
+                auto old_bucket_idx = bucket_idx_from_hash(old_hash);
+
+                while(at(m_buckets, old_bucket_idx).m_value_idx != value_idx_to_change)
+                {
+                    old_bucket_idx = next(old_bucket_idx);
+                }
+
+                // shift down until either empty or an element with correct spot is found
+                auto next_bucket_idx = next(old_bucket_idx);
+                while(at(m_buckets, next_bucket_idx).m_dist_and_fingerprint >= Bucket::dist_inc * 2)
+                {
+                    at(m_buckets, old_bucket_idx) = {dist_dec(at(m_buckets, next_bucket_idx).m_dist_and_fingerprint),
+                                                 at(m_buckets, next_bucket_idx).m_value_idx};
+                    old_bucket_idx = std::exchange(next_bucket_idx, next(next_bucket_idx));
+                }
+                at(m_buckets, old_bucket_idx) = {};                
+
+                // place new key, with existing value idx
+                place_and_shift_up({dist_and_fingerprint, value_idx_to_change}, new_bucket_idx);
+                it->first = new_key;
+                return {it, true};
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            new_bucket_idx = next(new_bucket_idx);
+        }           
+    }
+
     auto erase(iterator it) -> iterator {
         auto hash = mixed_hash(get_key(*it));
         auto bucket_idx = bucket_idx_from_hash(hash);
