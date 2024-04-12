@@ -29,9 +29,10 @@ template <class Key,
           class Hash = ankerl::unordered_dense::hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::deque<std::pair<Key, T>>,
-          class Bucket = ankerl::unordered_dense::bucket_type::standard>
-class deque_map : public ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false> {
-    using base_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
+          class Bucket = ankerl::unordered_dense::bucket_type::standard,
+          class KeyedValue = ankerl::unordered_dense::get_key<std::pair<Key, T>>>
+class deque_map : public ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, false>;
     using base_t::base_t;
 };
 
@@ -39,10 +40,11 @@ template <class Key,
           class Hash = ankerl::unordered_dense::hash<Key>,
           class KeyEqual = std::equal_to<Key>,
           class AllocatorOrContainer = std::deque<Key>,
-          class Bucket = ankerl::unordered_dense::bucket_type::standard>
+          class Bucket = ankerl::unordered_dense::bucket_type::standard,
+          class KeyedValue = ankerl::unordered_dense::get_key<Key>>
 class deque_set
-    : public ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false> {
-    using base_t = ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
+    : public ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, false> {
+    using base_t = ankerl::unordered_dense::detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, false>;
     using base_t::base_t;
 };
 

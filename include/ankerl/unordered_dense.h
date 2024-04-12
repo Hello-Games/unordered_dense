@@ -270,6 +270,22 @@ inline void mum(uint64_t* a, uint64_t* b) {
 } // namespace detail::wyhash
 
 ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
+struct get_key {
+    using default_get_key = void;
+    auto operator()(T& obj) const noexcept -> T& {
+        return obj;
+    }
+};
+
+template <typename T, typename U>
+struct get_key<std::pair<T, U>> {
+    using default_get_key = void;
+    auto operator()(std::pair<T, U>& obj) const noexcept -> T& {
+        return obj.first;
+    }
+};
+
+ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
 struct hash {
     auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
         -> uint64_t {
@@ -476,6 +492,9 @@ using detect_iterator = typename T::iterator;
 template <typename T>
 using detect_reserve = decltype(std::declval<T&>().reserve(size_t{}));
 
+template <typename T>
+using detect_is_keyed_value = typename T::default_get_key;
+
 // enable_if helpers
 
 template <typename Mapped>
@@ -491,6 +510,9 @@ constexpr bool is_neither_convertible_v = !std::is_convertible_v<From, To1> && !
 
 template <typename T>
 constexpr bool has_reserve = is_detected_v<detect_reserve, T>;
+
+template <typename T>
+constexpr bool is_keyed_value_v = is_detected_v<detect_is_keyed_value, T>;
 
 // base type for map has mapped_type
 template <class T>
@@ -805,9 +827,10 @@ template <class Key,
           class KeyEqual,
           class AllocatorOrContainer,
           class Bucket,
+          class KeyedValue,
           bool IsSegmented>
 class table : public std::conditional_t<is_map_v<T>, base_table_type_map<T>, base_table_type_set> {
-    using underlying_value_type = typename std::conditional_t<is_map_v<T>, std::pair<Key, T>, Key>;
+    using underlying_value_type = typename std::conditional_t<is_map_v<T>, std::conditional_t<is_keyed_value_v<KeyedValue>, std::pair<Key, T>, T>, Key>;
     using underlying_container_type = std::conditional_t<IsSegmented,
                                                          segmented_vector<underlying_value_type, AllocatorOrContainer>,
                                                          std::vector<underlying_value_type, AllocatorOrContainer>>;
@@ -855,6 +878,7 @@ private:
     float m_max_load_factor = default_max_load_factor;
     Hash m_hash{};
     KeyEqual m_equal{};
+    KeyedValue m_get_key{};
     uint8_t m_shifts = initial_shifts;
 
     [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
@@ -903,12 +927,28 @@ private:
         return static_cast<value_idx_type>(hash >> m_shifts);
     }
 
-    [[nodiscard]] static constexpr auto get_key(value_type const& vt) -> key_type const& {
-        if constexpr (is_map_v<T>) {
-            return vt.first;
-        } else {
-            return vt;
-        }
+    [[nodiscard]] auto get_key(value_type const& vt) const -> key_type const& {
+        return m_get_key(const_cast<value_type&>(vt));
+    }
+
+    [[nodiscard]] auto get_key(value_type& vt) const -> key_type& {
+        return m_get_key(vt);
+    }
+
+    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    [[nodiscard]] static constexpr auto get_value(value_type const& vt) -> Q const& {
+        if constexpr(is_keyed_value_v<KeyedValue>)
+            return vt.second;
+        else
+            return vt;        
+    }
+
+    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    [[nodiscard]] static constexpr auto get_value(value_type& vt) -> Q& {
+        if constexpr(is_keyed_value_v<KeyedValue>)
+            return vt.second;
+        else
+            return vt;        
     }
 
     template <typename K>
@@ -1171,7 +1211,7 @@ private:
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
     auto do_at(K const& key) -> Q& {
         if (auto it = find(key); ANKERL_UNORDERED_DENSE_LIKELY(end() != it)) {
-            return it->second;
+            return get_value(*it);
         }
         on_error_key_not_found();
     }
@@ -1185,10 +1225,12 @@ public:
     explicit table(size_t bucket_count,
                    Hash const& hash = Hash(),
                    KeyEqual const& equal = KeyEqual(),
-                   allocator_type const& alloc_or_container = allocator_type())
+                   allocator_type const& alloc_or_container = allocator_type(),
+                   KeyedValue const& get_key = KeyedValue())
         : m_values(alloc_or_container)
         , m_hash(hash)
-        , m_equal(equal) {
+        , m_equal(equal)
+        , m_get_key(get_key) {
         if (0 != bucket_count) {
             reserve(bucket_count);
         } else {
@@ -1235,7 +1277,8 @@ public:
         : m_values(other.m_values, alloc)
         , m_max_load_factor(other.m_max_load_factor)
         , m_hash(other.m_hash)
-        , m_equal(other.m_equal) {
+        , m_equal(other.m_equal)
+        , m_get_key(other.m_get_key) {
         copy_buckets(other);
     }
 
@@ -1276,6 +1319,7 @@ public:
             m_max_load_factor = other.m_max_load_factor;
             m_hash = other.m_hash;
             m_equal = other.m_equal;
+            m_get_key = other.m_get_key;
             m_shifts = initial_shifts;
             copy_buckets(other);
         }
@@ -1299,6 +1343,7 @@ public:
                 m_max_load_factor = std::exchange(other.m_max_load_factor, default_max_load_factor);
                 m_hash = std::exchange(other.m_hash, {});
                 m_equal = std::exchange(other.m_equal, {});
+                m_get_key = std::exchange(other.m_get_key, {});
                 other.allocate_buckets_from_shift();
                 other.clear_buckets();
             } else {
@@ -1312,6 +1357,7 @@ public:
                 other.clear_buckets();
                 m_hash = other.m_hash;
                 m_equal = other.m_equal;
+                m_get_key = other.m_get_key;
             }
             // map "other" is now already usable, it's empty.
         }
@@ -1380,7 +1426,27 @@ public:
     }
 
     auto insert(value_type const& value) -> std::pair<iterator, bool> {
-        return emplace(value);
+        auto& key = get_key(value);
+        auto hash = mixed_hash(key);
+        auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
+        auto bucket_idx = bucket_idx_from_hash(hash);
+
+        while (dist_and_fingerprint <= at(m_buckets, bucket_idx).m_dist_and_fingerprint) {
+            if (dist_and_fingerprint == at(m_buckets, bucket_idx).m_dist_and_fingerprint &&
+                m_equal(key, get_key(m_values[at(m_buckets, bucket_idx).m_value_idx]))) {
+                // found it, return without ever actually creating anything
+                return {begin() + static_cast<difference_type>(at(m_buckets, bucket_idx).m_value_idx), false};
+            }
+            dist_and_fingerprint = dist_inc(dist_and_fingerprint);
+            bucket_idx = next(bucket_idx);
+        }
+
+        // value is new, insert element first, so when exception happens we are in a valid state
+        return do_place_element(dist_and_fingerprint, bucket_idx, value);
+    }
+
+    auto insert(value_type& value) -> std::pair<iterator, bool> {
+        return insert(static_cast<value_type const&>(value));
     }
 
     auto insert(value_type&& value) -> std::pair<iterator, bool> {
@@ -1393,6 +1459,10 @@ public:
     }
 
     auto insert(const_iterator /*hint*/, value_type const& value) -> iterator {
+        return insert(value).first;
+    }
+
+    auto insert(const_iterator /*hint*/, value_type& value) -> iterator {
         return insert(value).first;
     }
 
@@ -1476,13 +1546,13 @@ public:
             }
         }
     }
-
-    template <class M, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    
+    template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto insert_or_assign(Key const& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(key, std::forward<M>(mapped));
     }
-
-    template <class M, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    
+    template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto insert_or_assign(Key&& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(std::move(key), std::forward<M>(mapped));
     }
@@ -1492,17 +1562,18 @@ public:
               typename Q = T,
               typename H = Hash,
               typename KE = KeyEqual,
-              std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
+              typename KV = KeyedValue,
+              std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE>, bool> = true>
     auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(std::forward<K>(key), std::forward<M>(mapped));
     }
-
-    template <class M, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    
+    template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto insert_or_assign(const_iterator /*hint*/, Key const& key, M&& mapped) -> iterator {
         return do_insert_or_assign(key, std::forward<M>(mapped)).first;
     }
 
-    template <class M, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto insert_or_assign(const_iterator /*hint*/, Key&& key, M&& mapped) -> iterator {
         return do_insert_or_assign(std::move(key), std::forward<M>(mapped)).first;
     }
@@ -1512,9 +1583,33 @@ public:
               typename Q = T,
               typename H = Hash,
               typename KE = KeyEqual,
-              std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
+              typename KV = KeyedValue,
+              std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE>, bool> = true>
     auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
         return do_insert_or_assign(std::forward<K>(key), std::forward<M>(mapped)).first;
+    }
+    
+    template <typename KV = KeyedValue, std::enable_if_t<!is_keyed_value_v<KV>, bool> = true>
+    auto insert_or_assign(value_type const& value) -> std::pair<iterator, bool> {
+        auto it_isinserted = insert(value);
+        if (!it_isinserted.second) {
+            *it_isinserted.first = value;
+        }
+        return it_isinserted;
+    }
+    
+    template <typename KV = KeyedValue, std::enable_if_t<!is_keyed_value_v<KV>, bool> = true>    
+    auto insert_or_assign(value_type& value) -> std::pair<iterator, bool> {
+        return insert_or_assign(static_cast<value_type const&>(value));
+    }
+    
+    template <class K, typename KV = KeyedValue, std::enable_if_t<!is_keyed_value_v<KV>, bool> = true>
+    auto insert_or_assign(K&& value) -> std::pair<iterator, bool> {
+        auto it_isinserted = emplace(std::forward<K>(value));
+        if (!it_isinserted.second) {
+            *it_isinserted.first = value;
+        }
+        return it_isinserted;
     }
 
     // Single arguments for unordered_set can be used without having to construct the value_type
@@ -1541,7 +1636,7 @@ public:
         // value is new, insert element first, so when exception happens we are in a valid state
         return do_place_element(dist_and_fingerprint, bucket_idx, std::forward<K>(key));
     }
-
+    
     template <class... Args>
     auto emplace(Args&&... args) -> std::pair<iterator, bool> {
         // we have to instantiate the value_type to be able to access the key.
@@ -1578,22 +1673,22 @@ public:
         return emplace(std::forward<Args>(args)...).first;
     }
 
-    template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(key, std::forward<Args>(args)...);
     }
 
-    template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...);
     }
 
-    template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
         return do_try_emplace(key, std::forward<Args>(args)...).first;
     }
 
-    template <class... Args, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...).first;
     }
@@ -1604,7 +1699,8 @@ public:
         typename Q = T,
         typename H = Hash,
         typename KE = KeyEqual,
-        std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
+        typename KV = KeyedValue,
+        std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
                          bool> = true>
     auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...);
@@ -1616,7 +1712,8 @@ public:
         typename Q = T,
         typename H = Hash,
         typename KE = KeyEqual,
-        std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
+        typename KV = KeyedValue,
+        std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
                          bool> = true>
     auto try_emplace(const_iterator /*hint*/, K&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...).first;
@@ -1659,7 +1756,7 @@ public:
 
                 // place new key, with existing value idx
                 place_and_shift_up({dist_and_fingerprint, value_idx_to_change}, new_bucket_idx);
-                it->first = new_key;
+                get_key(*it) = new_key;
                 return {it, true};
             }
             dist_and_fingerprint = dist_inc(dist_and_fingerprint);
@@ -1795,12 +1892,12 @@ public:
         return do_at(key);
     }
 
-    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto operator[](Key const& key) -> Q& {
         return try_emplace(key).first->second;
     }
 
-    template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
+    template <typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
     auto operator[](Key&& key) -> Q& {
         return try_emplace(std::move(key)).first->second;
     }
@@ -1809,7 +1906,8 @@ public:
               typename Q = T,
               typename H = Hash,
               typename KE = KeyEqual,
-              std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
+              typename KV = KeyedValue,
+              std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE>, bool> = true>
     auto operator[](K&& key) -> Q& {
         return try_emplace(std::forward<K>(key)).first->second;
     }
@@ -1943,6 +2041,10 @@ public:
         return m_equal;
     }
 
+    auto keyed_value() const -> key_equal {
+        return m_get_key;
+    }
+
     // nonstandard API: expose the underlying values container
     [[nodiscard]] auto values() const noexcept -> value_container_type const& {
         return m_values;
@@ -1958,10 +2060,10 @@ public:
             return false;
         }
         for (auto const& b_entry : b) {
-            auto it = a.find(get_key(b_entry));
+            auto it = a.find(a.get_key(b_entry));
             if constexpr (is_map_v<T>) {
                 // map: check that key is here, then also check that value is the same
-                if (a.end() == it || !(b_entry.second == it->second)) {
+                if (a.end() == it || !(get_value(b_entry) == get_value(*it))) {
                     return false;
                 }
             } else {
@@ -1986,30 +2088,32 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-                                        class Bucket = bucket_type::standard>
-using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
+                                        class Bucket = bucket_type::standard,
+                                        class KeyedValue = get_key<std::pair<Key, T>>>
+using map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, false>;
 
 ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class AllocatorOrContainer = std::allocator<std::pair<Key, T>>,
-                                        class Bucket = bucket_type::standard>
-using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
+                                        class Bucket = bucket_type::standard,
+                                        class KeyedValue = get_key<std::pair<Key, T>>>
+using segmented_map = detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, true>;
 
 ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class AllocatorOrContainer = std::allocator<Key>,
                                         class Bucket = bucket_type::standard>
-using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, false>;
+using set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, get_key<Key>, false>;
 
 ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class AllocatorOrContainer = std::allocator<Key>,
                                         class Bucket = bucket_type::standard>
-using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, true>;
+using segmented_set = detail::table<Key, void, Hash, KeyEqual, AllocatorOrContainer, Bucket, get_key<Key>, true>;
 
 #    if defined(ANKERL_UNORDERED_DENSE_PMR)
 
@@ -2019,30 +2123,32 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
-                                        class Bucket = bucket_type::standard>
+                                        class Bucket = bucket_type::standard,
+                                        class KeyedValue = get_key<std::pair<Key, T>>>
 using map =
-    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, false>;
+    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, KeyedValue, false>;
 
 ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class T,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
-                                        class Bucket = bucket_type::standard>
+                                        class Bucket = bucket_type::standard,
+                                        class KeyedValue = get_key<std::pair<Key, T>>>
 using segmented_map =
-    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, true>;
+    detail::table<Key, T, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<std::pair<Key, T>>, Bucket, KeyedValue, true>;
 
 ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class Bucket = bucket_type::standard>
-using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, false>;
+using set = detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, get_key<Key>, false>;
 
 ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class Hash = hash<Key>,
                                         class KeyEqual = std::equal_to<Key>,
                                         class Bucket = bucket_type::standard>
 using segmented_set =
-    detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, true>;
+    detail::table<Key, void, Hash, KeyEqual, ANKERL_UNORDERED_DENSE_PMR::polymorphic_allocator<Key>, Bucket, get_key<Key>, true>;
 
 } // namespace pmr
 
@@ -2066,12 +2172,13 @@ ANKERL_UNORDERED_DENSE_EXPORT template <class Key,
                                         class KeyEqual,
                                         class AllocatorOrContainer,
                                         class Bucket,
+                                        class KeyedValue,
                                         class Pred,
                                         bool IsSegmented>
 // NOLINTNEXTLINE(cert-dcl58-cpp)
-auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented>& map,
+auto erase_if(ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, IsSegmented>& map,
               Pred pred) -> size_t {
-    using map_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, IsSegmented>;
+    using map_t = ankerl::unordered_dense::detail::table<Key, T, Hash, KeyEqual, AllocatorOrContainer, Bucket, KeyedValue, IsSegmented>;
 
     // going back to front because erase() invalidates the end iterator
     auto const old_size = map.size();
