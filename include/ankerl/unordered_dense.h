@@ -70,6 +70,17 @@
 #    define ANKERL_UNORDERED_DENSE_NOINLINE __attribute__((noinline))
 #endif
 
+#if !defined(ANKERL_UNORDERED_DENSE_FORCEINLINE)
+#  if defined(_MSC_VER)
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE __forceinline
+#  elif defined(__GNUC__) && __GNUC__ > 3
+     // Clang also defines __GNUC__ (as 4)
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE inline __attribute__ ((__always_inline__))
+#  else
+#    define ANKERL_UNORDERED_DENSE_FORCEINLINE inline
+#  endif
+#endif
+
 // defined in unordered_dense.cpp
 #if !defined(ANKERL_UNORDERED_DENSE_EXPORT)
 #    define ANKERL_UNORDERED_DENSE_EXPORT
@@ -163,7 +174,7 @@ namespace detail {
 // hardcodes seed and the secret, reformats the code, and clang-tidy fixes.
 namespace detail::wyhash {
 
-inline void mum(uint64_t* a, uint64_t* b) {
+ANKERL_UNORDERED_DENSE_FORCEINLINE void mum(uint64_t* a, uint64_t* b) {
 #    if defined(__SIZEOF_INT128__)
     __uint128_t r = *a;
     r *= *b;
@@ -193,26 +204,26 @@ inline void mum(uint64_t* a, uint64_t* b) {
 }
 
 // multiply and xor mix function, aka MUM
-[[nodiscard]] inline auto mix(uint64_t a, uint64_t b) -> uint64_t {
+[[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto mix(uint64_t a, uint64_t b) -> uint64_t {
     mum(&a, &b);
     return a ^ b;
 }
 
 // read functions. WARNING: we don't care about endianness, so results are different on big endian!
-[[nodiscard]] inline auto r8(const uint8_t* p) -> uint64_t {
+[[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto r8(const uint8_t* p) -> uint64_t {
     uint64_t v{};
     std::memcpy(&v, p, 8U);
     return v;
 }
 
-[[nodiscard]] inline auto r4(const uint8_t* p) -> uint64_t {
+[[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto r4(const uint8_t* p) -> uint64_t {
     uint32_t v{};
     std::memcpy(&v, p, 4);
     return v;
 }
 
 // reads 1, 2, or 3 bytes
-[[nodiscard]] inline auto r3(const uint8_t* p, size_t k) -> uint64_t {
+[[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto r3(const uint8_t* p, size_t k) -> uint64_t {
     return (static_cast<uint64_t>(p[0]) << 16U) | (static_cast<uint64_t>(p[k >> 1U]) << 8U) | p[k - 1];
 }
 
@@ -263,7 +274,7 @@ inline void mum(uint64_t* a, uint64_t* b) {
     return mix(secret[1] ^ len, mix(a ^ secret[1], b ^ seed));
 }
 
-[[nodiscard]] inline auto hash(uint64_t x) -> uint64_t {
+[[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto hash(uint64_t x) -> uint64_t {
     return detail::wyhash::mix(x, UINT64_C(0x9E3779B97F4A7C15));
 }
 
@@ -272,7 +283,7 @@ inline void mum(uint64_t* a, uint64_t* b) {
 ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
 struct get_key {
     using default_get_key = void;
-    auto operator()(T& obj) const noexcept -> T& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(T& obj) const noexcept -> T& {
         return obj;
     }
 };
@@ -280,14 +291,14 @@ struct get_key {
 template <typename T, typename U>
 struct get_key<std::pair<T, U>> {
     using default_get_key = void;
-    auto operator()(std::pair<T, U>& obj) const noexcept -> T& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::pair<T, U>& obj) const noexcept -> T& {
         return obj.first;
     }
 };
 
 ANKERL_UNORDERED_DENSE_EXPORT template <typename T, typename Enable = void>
 struct hash {
-    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
         -> uint64_t {
         return std::hash<T>{}(obj);
     }
@@ -296,7 +307,7 @@ struct hash {
 template <typename T>
 struct hash<T, typename std::hash<T>::is_avalanching> {
     using is_avalanching = void;
-    auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(T const& obj) const noexcept(noexcept(std::declval<std::hash<T>>().operator()(std::declval<T const&>())))
         -> uint64_t {
         return std::hash<T>{}(obj);
     }
@@ -305,7 +316,7 @@ struct hash<T, typename std::hash<T>::is_avalanching> {
 template <typename CharT>
 struct hash<std::basic_string<CharT>> {
     using is_avalanching = void;
-    auto operator()(std::basic_string<CharT> const& str) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::basic_string<CharT> const& str) const noexcept -> uint64_t {
         return detail::wyhash::hash(str.data(), sizeof(CharT) * str.size());
     }
 };
@@ -313,7 +324,7 @@ struct hash<std::basic_string<CharT>> {
 template <typename CharT>
 struct hash<std::basic_string_view<CharT>> {
     using is_avalanching = void;
-    auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::basic_string_view<CharT> const& sv) const noexcept -> uint64_t {
         return detail::wyhash::hash(sv.data(), sizeof(CharT) * sv.size());
     }
 };
@@ -321,7 +332,7 @@ struct hash<std::basic_string_view<CharT>> {
 template <class T>
 struct hash<T*> {
     using is_avalanching = void;
-    auto operator()(T* ptr) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(T* ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr));
     }
@@ -330,7 +341,7 @@ struct hash<T*> {
 template <class T>
 struct hash<std::unique_ptr<T>> {
     using is_avalanching = void;
-    auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::unique_ptr<T> const& ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
     }
@@ -339,7 +350,7 @@ struct hash<std::unique_ptr<T>> {
 template <class T>
 struct hash<std::shared_ptr<T>> {
     using is_avalanching = void;
-    auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::shared_ptr<T> const& ptr) const noexcept -> uint64_t {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         return detail::wyhash::hash(reinterpret_cast<uintptr_t>(ptr.get()));
     }
@@ -348,7 +359,7 @@ struct hash<std::shared_ptr<T>> {
 template <typename Enum>
 struct hash<Enum, typename std::enable_if<std::is_enum<Enum>::value>::type> {
     using is_avalanching = void;
-    auto operator()(Enum e) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(Enum e) const noexcept -> uint64_t {
         using underlying = typename std::underlying_type_t<Enum>;
         return detail::wyhash::hash(static_cast<underlying>(e));
     }
@@ -359,7 +370,7 @@ struct tuple_hash_helper {
     // Converts the value into 64bit. If it is an integral type, just cast it. Mixing is doing the rest.
     // If it isn't an integral we need to hash it.
     template <typename Arg>
-    [[nodiscard]] constexpr static auto to64(Arg const& arg) -> uint64_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE constexpr static auto to64(Arg const& arg) -> uint64_t {
         if constexpr (std::is_integral_v<Arg> || std::is_enum_v<Arg>) {
             return static_cast<uint64_t>(arg);
         } else {
@@ -367,7 +378,7 @@ struct tuple_hash_helper {
         }
     }
 
-    [[nodiscard]] static auto mix64(uint64_t state, uint64_t v) -> uint64_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static auto mix64(uint64_t state, uint64_t v) -> uint64_t {
         return detail::wyhash::mix(state + v, uint64_t{0x9ddfea08eb382d69});
     }
 
@@ -375,7 +386,7 @@ struct tuple_hash_helper {
     // not, we hash the object and use this for the array. Size of the array is known at compile time, and memcpy is optimized
     // away, so filling the buffer is highly efficient. Finally, call wyhash with this buffer.
     template <typename T, std::size_t... Idx>
-    [[nodiscard]] static auto calc_hash(T const& t, std::index_sequence<Idx...>) noexcept -> uint64_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static auto calc_hash(T const& t, std::index_sequence<Idx...>) noexcept -> uint64_t {
         auto h = uint64_t{};
         ((h = mix64(h, to64(std::get<Idx>(t)))), ...);
         return h;
@@ -385,7 +396,7 @@ struct tuple_hash_helper {
 template <typename... Args>
 struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
     using is_avalanching = void;
-    auto operator()(std::tuple<Args...> const& t) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::tuple<Args...> const& t) const noexcept -> uint64_t {
         return tuple_hash_helper<Args...>::calc_hash(t, std::index_sequence_for<Args...>{});
     }
 };
@@ -393,7 +404,7 @@ struct hash<std::tuple<Args...>> : tuple_hash_helper<Args...> {
 template <typename A, typename B>
 struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
     using is_avalanching = void;
-    auto operator()(std::pair<A, B> const& t) const noexcept -> uint64_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator()(std::pair<A, B> const& t) const noexcept -> uint64_t {
         return tuple_hash_helper<A, B>::calc_hash(t, std::index_sequence_for<A, B>{});
     }
 };
@@ -403,6 +414,7 @@ struct hash<std::pair<A, B>> : tuple_hash_helper<A, B> {
         template <>                                                      \
         struct hash<T> {                                                 \
             using is_avalanching = void;                                 \
+            ANKERL_UNORDERED_DENSE_FORCEINLINE                           \
             auto operator()(T const& obj) const noexcept -> uint64_t {   \
                 return detail::wyhash::hash(static_cast<uint64_t>(obj)); \
             }                                                            \
@@ -638,7 +650,7 @@ private:
     };
 
     // slow path: need to allocate a new segment every once in a while
-    void increase_capacity() {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void increase_capacity() {
         auto ba = Allocator(m_blocks.get_allocator());
         pointer block = std::allocator_traits<Allocator>::allocate(ba, num_elements_in_block);
         m_blocks.push_back(block);
@@ -660,7 +672,7 @@ private:
         }
     }
 
-    void dealloc() {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void dealloc() {
         auto ba = Allocator(m_blocks.get_allocator());
         for (auto ptr : m_blocks) {
             std::allocator_traits<Allocator>::deallocate(ba, ptr, num_elements_in_block);
@@ -881,29 +893,29 @@ private:
     KeyedValue m_get_key{};
     uint8_t m_shifts = initial_shifts;
 
-    [[nodiscard]] auto next(value_idx_type bucket_idx) const -> value_idx_type {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto next(value_idx_type bucket_idx) const -> value_idx_type {
         return ANKERL_UNORDERED_DENSE_UNLIKELY(bucket_idx + 1U == m_num_buckets)
                    ? 0
                    : static_cast<value_idx_type>(bucket_idx + 1U);
     }
 
     // Helper to access bucket through pointer types
-    [[nodiscard]] static constexpr auto at(bucket_pointer bucket_ptr, size_t offset) -> Bucket& {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static constexpr auto at(bucket_pointer bucket_ptr, size_t offset) -> Bucket& {
         return *(bucket_ptr + static_cast<typename std::allocator_traits<bucket_alloc>::difference_type>(offset));
     }
 
     // use the dist_inc and dist_dec functions so that uint16_t types work without warning
-    [[nodiscard]] static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static constexpr auto dist_inc(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
         return static_cast<dist_and_fingerprint_type>(x + Bucket::dist_inc);
     }
 
-    [[nodiscard]] static constexpr auto dist_dec(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static constexpr auto dist_dec(dist_and_fingerprint_type x) -> dist_and_fingerprint_type {
         return static_cast<dist_and_fingerprint_type>(x - Bucket::dist_inc);
     }
 
     // The goal of mixed_hash is to always produce a high quality 64bit hash.
     template <typename K>
-    [[nodiscard]] constexpr auto mixed_hash(K const& key) const -> uint64_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE constexpr auto mixed_hash(K const& key) const -> uint64_t {
         if constexpr (is_detected_v<detect_avalanching, Hash>) {
             // we know that the hash is good because is_avalanching.
             if constexpr (sizeof(decltype(m_hash(key))) < sizeof(uint64_t)) {
@@ -919,32 +931,32 @@ private:
         }
     }
 
-    [[nodiscard]] constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> dist_and_fingerprint_type {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE constexpr auto dist_and_fingerprint_from_hash(uint64_t hash) const -> dist_and_fingerprint_type {
         return Bucket::dist_inc | (static_cast<dist_and_fingerprint_type>(hash) & Bucket::fingerprint_mask);
     }
 
-    [[nodiscard]] constexpr auto bucket_idx_from_hash(uint64_t hash) const -> value_idx_type {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE constexpr auto bucket_idx_from_hash(uint64_t hash) const -> value_idx_type {
         return static_cast<value_idx_type>(hash >> m_shifts);
     }
 
-    [[nodiscard]] auto get_key(value_type const& vt) const -> key_type const& {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto get_key(value_type const& vt) const -> key_type const& {
         return m_get_key(const_cast<value_type&>(vt));
     }
 
-    [[nodiscard]] auto get_key(value_type& vt) const -> key_type& {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto get_key(value_type& vt) const -> key_type& {
         return m_get_key(vt);
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    [[nodiscard]] static constexpr auto get_value(value_type const& vt) -> Q const& {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static constexpr auto get_value(value_type const& vt) -> Q const& {
         if constexpr(is_keyed_value_v<KeyedValue>)
             return vt.second;
         else
             return vt;        
-    }
+        }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    [[nodiscard]] static constexpr auto get_value(value_type& vt) -> Q& {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static constexpr auto get_value(value_type& vt) -> Q& {
         if constexpr(is_keyed_value_v<KeyedValue>)
             return vt.second;
         else
@@ -952,7 +964,7 @@ private:
     }
 
     template <typename K>
-    [[nodiscard]] auto next_while_less(K const& key) const -> Bucket {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto next_while_less(K const& key) const -> Bucket {
         auto hash = mixed_hash(key);
         auto dist_and_fingerprint = dist_and_fingerprint_from_hash(hash);
         auto bucket_idx = bucket_idx_from_hash(hash);
@@ -964,7 +976,7 @@ private:
         return {dist_and_fingerprint, bucket_idx};
     }
 
-    void place_and_shift_up(Bucket bucket, value_idx_type place) {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void place_and_shift_up(Bucket bucket, value_idx_type place) {
         while (0 != at(m_buckets, place).m_dist_and_fingerprint) {
             bucket = std::exchange(at(m_buckets, place), bucket);
             bucket.m_dist_and_fingerprint = dist_inc(bucket.m_dist_and_fingerprint);
@@ -973,11 +985,11 @@ private:
         at(m_buckets, place) = bucket;
     }
 
-    [[nodiscard]] static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE static constexpr auto calc_num_buckets(uint8_t shifts) -> size_t {
         return (std::min)(max_bucket_count(), size_t{1} << (64U - shifts));
     }
 
-    [[nodiscard]] constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE constexpr auto calc_shifts_for_size(size_t s) const -> uint8_t {
         auto shifts = initial_shifts;
         while (shifts > 0 && static_cast<size_t>(static_cast<float>(calc_num_buckets(shifts)) * max_load_factor()) < s) {
             --shifts;
@@ -1002,7 +1014,7 @@ private:
     /**
      * True when no element can be added any more without increasing the size
      */
-    [[nodiscard]] auto is_full() const -> bool {
+    [[nodiscard]] ANKERL_UNORDERED_DENSE_FORCEINLINE auto is_full() const -> bool {
         return size() > m_max_bucket_capacity;
     }
 
@@ -1059,7 +1071,7 @@ private:
     }
 
     template <typename Op>
-    void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void do_erase(value_idx_type bucket_idx, Op handle_erased_value) {
         auto const value_idx_to_remove = at(m_buckets, bucket_idx).m_value_idx;
 
         // shift down until either empty or an element with correct spot is found
@@ -1113,7 +1125,7 @@ private:
     }
 
     template <class K, class M>
-    auto do_insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
         auto it_isinserted = try_emplace(std::forward<K>(key), std::forward<M>(mapped));
         if (!it_isinserted.second) {
             it_isinserted.first->second = std::forward<M>(mapped);
@@ -1122,7 +1134,7 @@ private:
     }
 
     template <typename... Args>
-    auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, Args&&... args)
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_place_element(dist_and_fingerprint_type dist_and_fingerprint, value_idx_type bucket_idx, Args&&... args)
         -> std::pair<iterator, bool> {
 
         // emplace the new value. If that throws an exception, no harm done; index is still in a valid state
@@ -1204,12 +1216,12 @@ private:
     }
 
     template <typename K>
-    auto do_find(K const& key) const -> const_iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_find(K const& key) const -> const_iterator {
         return const_cast<table*>(this)->do_find(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto do_at(K const& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_at(K const& key) -> Q& {
         if (auto it = find(key); ANKERL_UNORDERED_DENSE_LIKELY(end() != it)) {
             return get_value(*it);
         }
@@ -1217,7 +1229,7 @@ private:
     }
 
     template <typename K, typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto do_at(K const& key) const -> Q const& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto do_at(K const& key) const -> Q const& {
         return const_cast<table*>(this)->at(key); // NOLINT(cppcoreguidelines-pro-type-const-cast)
     }
 
@@ -1445,45 +1457,45 @@ public:
         return do_place_element(dist_and_fingerprint, bucket_idx, value);
     }
 
-    auto insert(value_type& value) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(value_type& value) -> std::pair<iterator, bool> {
         return insert(static_cast<value_type const&>(value));
     }
 
-    auto insert(value_type&& value) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(value_type&& value) -> std::pair<iterator, bool> {
         return emplace(std::move(value));
     }
 
     template <class P, std::enable_if_t<std::is_constructible_v<value_type, P&&>, bool> = true>
-    auto insert(P&& value) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(P&& value) -> std::pair<iterator, bool> {
         return emplace(std::forward<P>(value));
     }
 
-    auto insert(const_iterator /*hint*/, value_type const& value) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(const_iterator /*hint*/, value_type const& value) -> iterator {
         return insert(value).first;
     }
 
-    auto insert(const_iterator /*hint*/, value_type& value) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(const_iterator /*hint*/, value_type& value) -> iterator {
         return insert(value).first;
     }
 
-    auto insert(const_iterator /*hint*/, value_type&& value) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(const_iterator /*hint*/, value_type&& value) -> iterator {
         return insert(std::move(value)).first;
     }
 
     template <class P, std::enable_if_t<std::is_constructible_v<value_type, P&&>, bool> = true>
-    auto insert(const_iterator /*hint*/, P&& value) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert(const_iterator /*hint*/, P&& value) -> iterator {
         return insert(std::forward<P>(value)).first;
     }
 
     template <class InputIt>
-    void insert(InputIt first, InputIt last) {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void insert(InputIt first, InputIt last) {
         while (first != last) {
             insert(*first);
             ++first;
         }
     }
 
-    void insert(std::initializer_list<value_type> ilist) {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE void insert(std::initializer_list<value_type> ilist) {
         insert(ilist.begin(), ilist.end());
     }
 
@@ -1548,12 +1560,12 @@ public:
     }
     
     template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto insert_or_assign(Key const& key, M&& mapped) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(Key const& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(key, std::forward<M>(mapped));
     }
     
     template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto insert_or_assign(Key&& key, M&& mapped) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(Key&& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(std::move(key), std::forward<M>(mapped));
     }
 
@@ -1564,17 +1576,17 @@ public:
               typename KE = KeyEqual,
               typename KV = KeyedValue,
               std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE>, bool> = true>
-    auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(K&& key, M&& mapped) -> std::pair<iterator, bool> {
         return do_insert_or_assign(std::forward<K>(key), std::forward<M>(mapped));
     }
     
     template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto insert_or_assign(const_iterator /*hint*/, Key const& key, M&& mapped) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(const_iterator /*hint*/, Key const& key, M&& mapped) -> iterator {
         return do_insert_or_assign(key, std::forward<M>(mapped)).first;
     }
 
     template <class M, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto insert_or_assign(const_iterator /*hint*/, Key&& key, M&& mapped) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(const_iterator /*hint*/, Key&& key, M&& mapped) -> iterator {
         return do_insert_or_assign(std::move(key), std::forward<M>(mapped)).first;
     }
 
@@ -1585,12 +1597,12 @@ public:
               typename KE = KeyEqual,
               typename KV = KeyedValue,
               std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE>, bool> = true>
-    auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(const_iterator /*hint*/, K&& key, M&& mapped) -> iterator {
         return do_insert_or_assign(std::forward<K>(key), std::forward<M>(mapped)).first;
     }
     
     template <typename KV = KeyedValue, std::enable_if_t<!is_keyed_value_v<KV>, bool> = true>
-    auto insert_or_assign(value_type const& value) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(value_type const& value) -> std::pair<iterator, bool> {
         auto it_isinserted = insert(value);
         if (!it_isinserted.second) {
             *it_isinserted.first = value;
@@ -1599,12 +1611,12 @@ public:
     }
     
     template <typename KV = KeyedValue, std::enable_if_t<!is_keyed_value_v<KV>, bool> = true>    
-    auto insert_or_assign(value_type& value) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(value_type& value) -> std::pair<iterator, bool> {
         return insert_or_assign(static_cast<value_type const&>(value));
     }
     
     template <class K, typename KV = KeyedValue, std::enable_if_t<!is_keyed_value_v<KV>, bool> = true>
-    auto insert_or_assign(K&& value) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto insert_or_assign(K&& value) -> std::pair<iterator, bool> {
         auto it_isinserted = emplace(std::forward<K>(value));
         if (!it_isinserted.second) {
             *it_isinserted.first = value;
@@ -1669,27 +1681,27 @@ public:
     }
 
     template <class... Args>
-    auto emplace_hint(const_iterator /*hint*/, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto emplace_hint(const_iterator /*hint*/, Args&&... args) -> iterator {
         return emplace(std::forward<Args>(args)...).first;
     }
 
     template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(key, std::forward<Args>(args)...);
     }
 
     template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(Key&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...);
     }
 
     template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(const_iterator /*hint*/, Key const& key, Args&&... args) -> iterator {
         return do_try_emplace(key, std::forward<Args>(args)...).first;
     }
 
     template <class... Args, typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(const_iterator /*hint*/, Key&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::move(key), std::forward<Args>(args)...).first;
     }
 
@@ -1702,7 +1714,7 @@ public:
         typename KV = KeyedValue,
         std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
                          bool> = true>
-    auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(K&& key, Args&&... args) -> std::pair<iterator, bool> {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...);
     }
 
@@ -1715,7 +1727,7 @@ public:
         typename KV = KeyedValue,
         std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE> && is_neither_convertible_v<K&&, iterator, const_iterator>,
                          bool> = true>
-    auto try_emplace(const_iterator /*hint*/, K&& key, Args&&... args) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto try_emplace(const_iterator /*hint*/, K&& key, Args&&... args) -> iterator {
         return do_try_emplace(std::forward<K>(key), std::forward<Args>(args)...).first;
     }
 
@@ -1795,12 +1807,12 @@ public:
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto erase(const_iterator it) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto erase(const_iterator it) -> iterator {
         return erase(begin() + (it - cbegin()));
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto extract(const_iterator it) -> value_type {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto extract(const_iterator it) -> value_type {
         return extract(begin() + (it - cbegin()));
     }
 
@@ -1828,12 +1840,12 @@ public:
         return begin() + idx_first;
     }
 
-    auto erase(Key const& key) -> size_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto erase(Key const& key) -> size_t {
         return do_erase_key(key, [](value_type&& /*unused*/) {
         });
     }
 
-    auto extract(Key const& key) -> std::optional<value_type> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto extract(Key const& key) -> std::optional<value_type> {
         auto tmp = std::optional<value_type>{};
         do_erase_key(key, [&tmp](value_type&& val) {
             tmp = std::move(val);
@@ -1842,7 +1854,7 @@ public:
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto erase(K&& key) -> size_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto erase(K&& key) -> size_t {
         return do_erase_key(std::forward<K>(key), [](value_type&& /*unused*/) {
         });
     }
@@ -1865,7 +1877,7 @@ public:
     // lookup /////////////////////////////////////////////////////////////////
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto at(key_type const& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto at(key_type const& key) -> Q& {
         return do_at(key);
     }
 
@@ -1874,12 +1886,12 @@ public:
               typename H = Hash,
               typename KE = KeyEqual,
               std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
-    auto at(K const& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto at(K const& key) -> Q& {
         return do_at(key);
     }
 
     template <typename Q = T, std::enable_if_t<is_map_v<Q>, bool> = true>
-    auto at(key_type const& key) const -> Q const& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto at(key_type const& key) const -> Q const& {
         return do_at(key);
     }
 
@@ -1888,17 +1900,17 @@ public:
               typename H = Hash,
               typename KE = KeyEqual,
               std::enable_if_t<is_map_v<Q> && is_transparent_v<H, KE>, bool> = true>
-    auto at(K const& key) const -> Q const& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto at(K const& key) const -> Q const& {
         return do_at(key);
     }
 
     template <typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto operator[](Key const& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator[](Key const& key) -> Q& {
         return try_emplace(key).first->second;
     }
 
     template <typename Q = T, typename KV = KeyedValue, std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV>, bool> = true>
-    auto operator[](Key&& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator[](Key&& key) -> Q& {
         return try_emplace(std::move(key)).first->second;
     }
 
@@ -1908,64 +1920,64 @@ public:
               typename KE = KeyEqual,
               typename KV = KeyedValue,
               std::enable_if_t<is_map_v<Q> && is_keyed_value_v<KV> && is_transparent_v<H, KE>, bool> = true>
-    auto operator[](K&& key) -> Q& {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto operator[](K&& key) -> Q& {
         return try_emplace(std::forward<K>(key)).first->second;
     }
 
-    auto count(Key const& key) const -> size_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto count(Key const& key) const -> size_t {
         return find(key) == end() ? 0 : 1;
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto count(K const& key) const -> size_t {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto count(K const& key) const -> size_t {
         return find(key) == end() ? 0 : 1;
     }
 
-    auto find(Key const& key) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto find(Key const& key) -> iterator {
         return do_find(key);
     }
 
-    auto find(Key const& key) const -> const_iterator {
-        return do_find(key);
-    }
-
-    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto find(K const& key) -> iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto find(Key const& key) const -> const_iterator {
         return do_find(key);
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto find(K const& key) const -> const_iterator {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto find(K const& key) -> iterator {
         return do_find(key);
     }
 
-    auto contains(Key const& key) const -> bool {
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto find(K const& key) const -> const_iterator {
+        return do_find(key);
+    }
+
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto contains(Key const& key) const -> bool {
         return find(key) != end();
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto contains(K const& key) const -> bool {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto contains(K const& key) const -> bool {
         return find(key) != end();
     }
 
-    auto equal_range(Key const& key) -> std::pair<iterator, iterator> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto equal_range(Key const& key) -> std::pair<iterator, iterator> {
         auto it = do_find(key);
         return {it, it == end() ? end() : it + 1};
     }
 
-    auto equal_range(const Key& key) const -> std::pair<const_iterator, const_iterator> {
-        auto it = do_find(key);
-        return {it, it == end() ? end() : it + 1};
-    }
-
-    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto equal_range(K const& key) -> std::pair<iterator, iterator> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto equal_range(const Key& key) const -> std::pair<const_iterator, const_iterator> {
         auto it = do_find(key);
         return {it, it == end() ? end() : it + 1};
     }
 
     template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
-    auto equal_range(K const& key) const -> std::pair<const_iterator, const_iterator> {
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto equal_range(K const& key) -> std::pair<iterator, iterator> {
+        auto it = do_find(key);
+        return {it, it == end() ? end() : it + 1};
+    }
+
+    template <class K, class H = Hash, class KE = KeyEqual, std::enable_if_t<is_transparent_v<H, KE>, bool> = true>
+    ANKERL_UNORDERED_DENSE_FORCEINLINE auto equal_range(K const& key) const -> std::pair<const_iterator, const_iterator> {
         auto it = do_find(key);
         return {it, it == end() ? end() : it + 1};
     }
